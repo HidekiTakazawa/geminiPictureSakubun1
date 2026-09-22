@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>中国語写真作文 - AI画像解析と作文添削で学ぶ中国語</title>
+  <meta name="description" content="写真やイラストから中国語の単語・ピンイン・日本語訳を自動抽出し、作文添削や模範文で楽しく学べる日本人向け中国語学習Webアプリ。">
+
+  <!-- Google Fonts (Outfit, Noto Sans JP, Noto Sans SC) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&family=Noto+Sans+SC:wght@400;500;700&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
+
+  <!-- App CSS -->
+  <link rel="stylesheet" href="css/style.css?v=3">
+
+  <!-- Vue.js 3 CDN (Prod/Dev) -->
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+</head>
+<body>
+  <div id="app" v-cloak>
+    <!-- ヘッダー -->
+    <header class="app-header">
+      <div class="header-container">
+        <div class="logo-section">
+          <div class="app-icon">文</div>
+          <div class="app-title">
+            <h1>中国語写真作文 <span class="badge-tag">AI Vision</span></h1>
+            <p>写真・イラストから語彙を学び、中国語作文をAIが添削</p>
+          </div>
+        </div>
+
+        <div class="header-actions">
+          <!-- デモモード / GAS接続ステータス -->
+          <button @click="openSettings" class="btn btn-outline" style="font-size: 0.82rem; padding: 0.4rem 0.8rem;">
+            <span class="status-dot" :class="{ 'connected': gasUrl, 'demo': isDemoMode }"></span>
+            <span v-if="gasUrl">GAS連携中</span>
+            <span v-else>デモモード (GAS未接続)</span>
+          </button>
+
+          <!-- テーマ切替 -->
+          <button @click="toggleTheme" class="btn-icon" :title="isDarkTheme ? 'ライトモードに切替' : 'ダークモードに切替'">
+            <span v-if="isDarkTheme">☀️</span>
+            <span v-else>🌙</span>
+          </button>
+
+          <!-- 設定ボタン -->
+          <button @click="openSettings" class="btn-icon" title="GAS連携・設定">
+            ⚙️
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- メインコンテンツ -->
+    <main class="main-container">
+      
+      <!-- ステータスバー（未接続時の案内） -->
+      <div v-if="!gasUrl" class="status-banner">
+        <div class="status-info">
+          <span>💡</span>
+          <span><strong>デモモードで動作中:</strong> サンプルデータで全機能を体験できます。Google Drive保存や独自のGemini APIを利用するには右上の⚙️からGAS URLを設定してください。</span>
+        </div>
+        <button @click="openSettings" class="btn btn-primary" style="padding: 0.4rem 0.85rem; font-size: 0.82rem;">
+          GASと連携する
+        </button>
+      </div>
+
+      <!-- メイングリッド (左: 画像 & 作文, 右: 単語 / 模範文 / 添削) -->
+      <div class="app-grid">
+        
+        <!-- 左カラム: 写真アップロード & 作文エリア -->
+        <div class="grid-column">
+          
+          <!-- 1. 画像アップロード / プレビューカード -->
+          <div class="card">
+            <div class="card-header">
+              <h2 class="card-title">
+                <span>🖼️</span> 写真・イラストの選択
+              </h2>
+              <div class="flex gap-2">
+                <button @click="openDriveModal" class="btn btn-outline" style="padding: 0.45rem 0.85rem; font-size: 0.82rem;" title="Google Driveに保存済みの画像から選択">
+                  📁 Driveから選択
+                </button>
+                <button v-if="currentImage" @click="analyzeImage" class="btn btn-primary" :disabled="isAnalyzing" style="padding: 0.45rem 0.9rem; font-size: 0.85rem;">
+                  <span v-if="isAnalyzing">解析中...</span>
+                  <span v-else>✨ AIで画像を解析</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- 画像未選択時: ドロップゾーン -->
+            <div v-if="!currentImage" 
+                 class="upload-dropzone" 
+                 @dragover.prevent 
+                 @drop="handleDrop" 
+                 @click="$refs.fileInput.click()">
+              <div class="upload-icon">📷</div>
+              <div class="upload-text">クリックまたは画像をドラッグ＆ドロップ</div>
+              <div class="upload-subtext">スマホ・PCの写真やイラスト（JPG, PNG, WebP）</div>
+              <div class="flex gap-2" style="justify-content: center; margin-top: 0.5rem;" @click.stop>
+                <button class="btn btn-primary" style="font-size: 0.82rem;" @click="$refs.fileInput.click()">
+                  PC/スマホから選択
+                </button>
+                <button class="btn btn-outline" style="font-size: 0.82rem;" @click="openDriveModal">
+                  📁 Google Driveから選ぶ
+                </button>
+              </div>
+            </div>
+
+            <!-- 画像プレビュー -->
+            <div v-else class="preview-wrapper">
+              <div class="preview-container">
+                <img :src="currentImage.previewUrl" :alt="currentImage.name" class="preview-image">
+                <div class="preview-overlay">
+                  <button @click="$refs.fileInput.click()" class="btn-icon" style="background: rgba(0,0,0,0.6); color: white; border: none;" title="別の画像に変更">
+                    🔄
+                  </button>
+                </div>
+              </div>
+
+              <!-- Google Drive 保存情報バッジ -->
+              <div v-if="driveInfo && driveInfo.saved" class="drive-badge">
+                <div class="flex items-center gap-2">
+                  <span>☁️</span>
+                  <span><strong>Google Drive 保存完了:</strong> {{ driveInfo.fileName }}</span>
+                </div>
+                <a v-if="driveInfo.fileUrl" :href="driveInfo.fileUrl" target="_blank" rel="noopener noreferrer" style="color: var(--primary); font-weight: 600; text-decoration: underline;">
+                  開く ↗
+                </a>
+              </div>
+            </div>
+
+            <input type="file" ref="fileInput" @change="handleFileChange" accept="image/*" class="hidden">
+
+            <!-- サンプルプリセット選択バー -->
+            <div class="sample-images-bar">
+              <span>サンプルを試す:</span>
+              <button class="sample-chip" @click="loadSamplePreset('cafe')">☕ カフェ</button>
+              <button class="sample-chip" @click="loadSamplePreset('park')">🌳 公園</button>
+            </div>
+          </div>
+
+          <!-- 2. 作文入力エディタカード -->
+          <div class="card" style="margin-top: 1.5rem;">
+            <div class="card-header">
+              <h2 class="card-title">
+                <span>✍️</span> あなたの中国語作文
+              </h2>
+              <span class="char-counter">{{ userEssay.length }} 文字</span>
+            </div>
+
+            <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.75rem;">
+              写真の内容を中国語で描写してみましょう。右側の抽出単語をクリックすると文中に挿入できます。
+            </p>
+
+            <textarea 
+              ref="essayTextarea"
+              v-model="userEssay" 
+              class="essay-textarea" 
+              placeholder="例: 我在咖啡厅喝咖啡。咖啡很好喝，我很喜欢看书。"
+              rows="4">
+            </textarea>
+
+            <div class="essay-actions">
+              <div class="flex items-center gap-2">
+                <button v-if="userEssay" @click="speakChinese(userEssay)" class="btn-icon" title="入力した作文の発音を聴く">
+                  🔊
+                </button>
+                <button v-if="userEssay" @click="userEssay = ''" class="btn btn-outline" style="padding: 0.4rem 0.75rem; font-size: 0.8rem;">
+                  クリア
+                </button>
+              </div>
+
+              <button 
+                @click="checkEssay" 
+                class="btn btn-accent" 
+                :disabled="isCheckingEssay || !userEssay.trim()"
+                style="padding: 0.55rem 1.25rem;">
+                <span v-if="isCheckingEssay">添削中...</span>
+                <span v-else>🤖 AIに添削してもらう</span>
+              </button>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- 右カラム: 単語一覧 / 模範作文 / 添削結果タブ -->
+        <div class="grid-column">
+          <div class="card" style="min-height: 540px;">
+            
+            <!-- タブナビゲーション -->
+            <div class="tab-nav">
+              <button 
+                class="tab-btn" 
+                :class="{ active: activeTab === 'words' }" 
+                @click="activeTab = 'words'">
+                <span>📸 単語一覧</span>
+                <span v-if="analysisData && analysisData.words" style="font-size: 0.75rem; background: rgba(0,0,0,0.1); padding: 0.1rem 0.4rem; border-radius: 99px;">
+                  {{ analysisData.words.length }}
+                </span>
+              </button>
+
+              <button 
+                class="tab-btn" 
+                :class="{ active: activeTab === 'model' }" 
+                @click="activeTab = 'model'">
+                <span>📖 模範作文</span>
+              </button>
+
+              <button 
+                class="tab-btn" 
+                :class="{ active: activeTab === 'correction' }" 
+                @click="activeTab = 'correction'">
+                <span>✍️ 添削結果</span>
+                <span v-if="correctionData" style="font-size: 0.75rem; background: var(--success); color: white; padding: 0.1rem 0.4rem; border-radius: 99px;">
+                  {{ correctionData.score }}点
+                </span>
+              </button>
+            </div>
+
+            <!-- ローディング状態 -->
+            <div v-if="isAnalyzing" class="loading-overlay">
+              <div class="spinner"></div>
+              <h3 style="font-size: 1.1rem; font-weight: 700;">Geminiが画像を分析中...</h3>
+              <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: 0.35rem;">
+                画像内の物体・状況から中国語の語彙とピンイン、模範作文を生成しています
+              </p>
+            </div>
+
+            <div v-else-if="isCheckingEssay" class="loading-overlay">
+              <div class="spinner"></div>
+              <h3 style="font-size: 1.1rem; font-weight: 700;">AI教師が作文を添削中...</h3>
+              <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: 0.35rem;">
+                文法、語順、より自然なネイティブ表現をチェックしています
+              </p>
+            </div>
+
+            <!-- タブ1: 単語一覧 -->
+            <div v-else-if="activeTab === 'words'">
+              <div v-if="analysisData && analysisData.words && analysisData.words.length > 0">
+                
+                <!-- シーン概要 -->
+                <div v-if="analysisData.scene_description_ja" class="scene-summary">
+                  <span>💡 <strong>シーン:</strong> {{ analysisData.scene_description_ja }}</span>
+                </div>
+
+                <div class="word-grid">
+                  <div v-for="(item, idx) in analysisData.words" :key="idx" class="word-card">
+                    <div class="word-header">
+                      <div>
+                        <span class="word-chinese">{{ item.word }}</span>
+                        <span class="word-pinyin">{{ item.pinyin }}</span>
+                      </div>
+                      <div class="word-actions">
+                        <button @click="speakChinese(item.word)" class="action-btn-sm" title="発音を聴く">
+                          🔊
+                        </button>
+                        <button @click="insertWordToEssay(item.word)" class="action-btn-sm" title="作文に挿入">
+                          ➕
+                        </button>
+                      </div>
+                    </div>
+
+                    <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.35rem;">
+                      <span class="word-pos">{{ item.pos }}</span>
+                      <span class="word-meaning">{{ item.meaning }}</span>
+                    </div>
+
+                    <!-- 例文 -->
+                    <div v-if="item.example_cn" class="word-example">
+                      <div class="flex items-center justify-between">
+                        <span class="example-cn">{{ item.example_cn }}</span>
+                        <button @click="speakChinese(item.example_cn)" class="action-btn-sm" style="width: 20px; height: 20px; font-size: 0.65rem;" title="例文を発音">
+                          🔊
+                        </button>
+                      </div>
+                      <div class="example-pinyin">{{ item.example_pinyin }}</div>
+                      <div class="example-ja">{{ item.example_ja }}</div>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+
+              <!-- 単語未解析時のプレースホルダー -->
+              <div v-else class="empty-state">
+                <div class="empty-icon">📷</div>
+                <h3>まだ画像が解析されていません</h3>
+                <p style="font-size: 0.85rem; margin-top: 0.35rem;">
+                  左側で写真を選択して「AIで画像を解析」を押すと、ここに中国語の単語とピンインが表示されます。
+                </p>
+              </div>
+            </div>
+
+            <!-- タブ2: 模範作文 -->
+            <div v-else-if="activeTab === 'model'">
+              <div v-if="analysisData && analysisData.model_essays">
+                
+                <!-- レベル切替 -->
+                <div class="essay-level-tabs">
+                  <button 
+                    class="level-chip" 
+                    :class="{ active: modelLevel === 'beginner' }" 
+                    @click="modelLevel = 'beginner'">
+                    🌱 初級 (HSK 1-2)
+                  </button>
+                  <button 
+                    class="level-chip" 
+                    :class="{ active: modelLevel === 'intermediate' }" 
+                    @click="modelLevel = 'intermediate'">
+                    🌿 中級 (HSK 3-4)
+                  </button>
+                </div>
+
+                <div v-if="analysisData.model_essays[modelLevel]" class="model-essay-box">
+                  <div class="flex items-center justify-between" style="margin-bottom: 0.75rem;">
+                    <span style="font-size: 0.85rem; font-weight: 700; color: var(--primary);">
+                      {{ analysisData.model_essays[modelLevel].level_title }}
+                    </span>
+                    <button 
+                      @click="speakChinese(analysisData.model_essays[modelLevel].essay_cn)" 
+                      class="btn btn-outline" 
+                      style="padding: 0.3rem 0.65rem; font-size: 0.8rem;">
+                      🔊 全文を聴く
+                    </button>
+                  </div>
+
+                  <div class="model-text-cn">
+                    {{ analysisData.model_essays[modelLevel].essay_cn }}
+                  </div>
+
+                  <div class="model-text-pinyin">
+                    {{ analysisData.model_essays[modelLevel].essay_pinyin }}
+                  </div>
+
+                  <div class="model-text-ja">
+                    {{ analysisData.model_essays[modelLevel].essay_ja }}
+                  </div>
+
+                  <!-- ポイント解説 -->
+                  <div v-if="analysisData.model_essays[modelLevel].key_points && analysisData.model_essays[modelLevel].key_points.length > 0">
+                    <div style="font-size: 0.82rem; font-weight: 700; margin-bottom: 0.35rem; color: var(--text-main);">
+                      💡 文法・表現のポイント:
+                    </div>
+                    <ul class="points-list">
+                      <li v-for="(pt, idx) in analysisData.model_essays[modelLevel].key_points" :key="idx">
+                        {{ pt }}
+                      </li>
+                    </ul>
+                  </div>
+
+                </div>
+
+              </div>
+
+              <!-- 模範作文未解析時のプレースホルダー -->
+              <div v-else class="empty-state">
+                <div class="empty-icon">📖</div>
+                <h3>模範作文がありません</h3>
+                <p style="font-size: 0.85rem; margin-top: 0.35rem;">
+                  画像を解析すると、Geminiによる初級・中級レベルの模範中国語作文が生成されます。
+                </p>
+              </div>
+            </div>
+
+            <!-- タブ3: 添削結果 -->
+            <div v-else-if="activeTab === 'correction'">
+              <div v-if="correctionData">
+                
+                <!-- スコアと総合コメント -->
+                <div class="feedback-summary">
+                  <div>
+                    <div style="font-size: 0.8rem; font-weight: 600; color: var(--text-muted);">AI評価スコア</div>
+                    <div class="score-badge">
+                      {{ correctionData.score }} <small>/ 100</small>
+                    </div>
+                  </div>
+                  <div style="flex: 1; margin-left: 1.5rem; font-size: 0.88rem; line-height: 1.5;">
+                    {{ correctionData.score_comment }}
+                  </div>
+                </div>
+
+                <!-- 添削後の完成文 -->
+                <div class="card" style="background: var(--bg-card-subtle); margin-bottom: 1.25rem;">
+                  <div class="flex items-center justify-between" style="margin-bottom: 0.5rem;">
+                    <div class="section-subtitle">
+                      <span>✨</span> 添削後の完成文
+                    </div>
+                    <button @click="speakChinese(correctionData.corrected_essay)" class="btn btn-outline" style="padding: 0.25rem 0.6rem; font-size: 0.78rem;">
+                      🔊 発音を聴く
+                    </button>
+                  </div>
+                  <div style="font-family: var(--font-chinese); font-size: 1.15rem; font-weight: 700; color: var(--primary-dark); margin-bottom: 0.35rem;">
+                    {{ correctionData.corrected_essay }}
+                  </div>
+                  <div style="font-size: 0.9rem; color: var(--primary); margin-bottom: 0.5rem;">
+                    {{ correctionData.corrected_pinyin }}
+                  </div>
+                  <div style="font-size: 0.85rem; color: var(--text-muted);">
+                    {{ correctionData.corrected_ja }}
+                  </div>
+                </div>
+
+                <!-- 修正箇所詳細 -->
+                <div v-if="correctionData.corrections && correctionData.corrections.length > 0" class="correction-section">
+                  <div class="section-subtitle">
+                    <span>🔍</span> 修正箇所の解説
+                  </div>
+                  <div v-for="(corr, idx) in correctionData.corrections" :key="idx" class="diff-card">
+                    <div class="diff-original">元の文: {{ corr.original }}</div>
+                    <div class="diff-corrected">修正後: {{ corr.corrected }} <span style="font-size: 0.82rem; font-weight: normal; color: var(--primary);">({{ corr.pinyin }})</span></div>
+                    <div class="diff-reason">{{ corr.reason }}</div>
+                  </div>
+                </div>
+
+                <!-- より自然な表現 (ネイティブTips) -->
+                <div v-if="correctionData.better_expressions && correctionData.better_expressions.length > 0" class="correction-section">
+                  <div class="section-subtitle">
+                    <span>💡</span> ネイティブ度UPの表現
+                  </div>
+                  <div v-for="(exp, idx) in correctionData.better_expressions" :key="idx" class="diff-card">
+                    <div class="flex items-center justify-between">
+                      <div style="font-family: var(--font-chinese); font-weight: 700; color: var(--text-main);">
+                        {{ exp.expression }} <span style="font-size: 0.82rem; color: var(--primary); font-weight: 500;">({{ exp.pinyin }})</span>
+                      </div>
+                      <button @click="speakChinese(exp.expression)" class="action-btn-sm" style="width: 22px; height: 22px; font-size: 0.7rem;">🔊</button>
+                    </div>
+                    <div style="font-size: 0.82rem; color: var(--text-muted); margin-top: 0.25rem;">
+                      {{ exp.meaning }}
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 文法ワンポイント -->
+                <div v-if="correctionData.grammar_tips && correctionData.grammar_tips.length > 0" class="correction-section">
+                  <div class="section-subtitle">
+                    <span>📚</span> 日本人学習者への文法アドバイス
+                  </div>
+                  <ul class="points-list">
+                    <li v-for="(tip, idx) in correctionData.grammar_tips" :key="idx">
+                      {{ tip }}
+                    </li>
+                  </ul>
+                </div>
+
+              </div>
+
+              <!-- 添削未実行時のプレースホルダー -->
+              <div v-else class="empty-state">
+                <div class="empty-icon">✍️</div>
+                <h3>作文の添削結果はまだありません</h3>
+                <p style="font-size: 0.85rem; margin-top: 0.35rem;">
+                  左側の作文エディタに中国語を入力し、「AIに添削してもらう」を押すと文法チェックや改善アドバイスが表示されます。
+                </p>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+      </div>
+    </main>
+
+    <!-- Google Drive 保存済み画像一覧モーダル -->
+    <div v-if="showDriveModal" class="modal-backdrop" @click.self="closeDriveModal">
+      <div class="modal-dialog" style="max-width: 720px;">
+        <div class="modal-header">
+          <h3 style="font-size: 1.15rem; font-weight: 700; display: flex; align-items: center; gap: 0.5rem;">
+            <span>📁</span> Google Drive 保存済み画像
+          </h3>
+          <button @click="closeDriveModal" class="btn-icon" style="border: none;">✕</button>
+        </div>
+
+        <div class="modal-body">
+          <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1rem;">
+            過去に解析した画像から選択して、再度単語の学習や作文の練習ができます。
+          </p>
+
+          <!-- ローディング中 -->
+          <div v-if="isLoadingDriveFiles" class="loading-overlay" style="padding: 2rem 1rem;">
+            <div class="spinner"></div>
+            <p style="color: var(--text-muted); font-size: 0.88rem;">Driveから画像一覧を取得中...</p>
+          </div>
+
+          <div v-else-if="isLoadingDriveImage" class="loading-overlay" style="padding: 2rem 1rem;">
+            <div class="spinner"></div>
+            <p style="color: var(--text-muted); font-size: 0.88rem;">画像を読み込み中...</p>
+          </div>
+
+          <!-- 画像一覧グリッド -->
+          <div v-else-if="driveFiles && driveFiles.length > 0" class="drive-gallery-grid">
+            <div 
+              v-for="file in driveFiles" 
+              :key="file.id" 
+              class="drive-gallery-card"
+              @click="selectDriveFile(file)">
+              <div class="drive-card-thumb-wrapper">
+                <img 
+                  v-if="file.thumbnailUrl" 
+                  :src="file.thumbnailUrl" 
+                  :alt="file.name" 
+                  class="drive-card-thumb" 
+                  loading="lazy"
+                  @error="$event.target.style.display='none'; $event.target.nextElementSibling.style.display='flex'">
+                <div class="drive-card-icon" :style="{ display: file.thumbnailUrl ? 'none' : 'flex' }">🖼️</div>
+              </div>
+              <div class="drive-card-info">
+                <div class="drive-card-name" :title="file.name">{{ file.name }}</div>
+                <div class="drive-card-date">{{ file.dateCreated }}</div>
+              </div>
+              <button class="btn btn-primary" style="padding: 0.35rem 0.75rem; font-size: 0.78rem; width: 100%;">
+                この画像で学習する
+              </button>
+            </div>
+          </div>
+
+          <!-- 空状態 -->
+          <div v-else class="empty-state" style="padding: 2rem 1rem;">
+            <div class="empty-icon">📂</div>
+            <h3>保存された画像がありません</h3>
+            <p style="font-size: 0.82rem; margin-top: 0.35rem;">
+              PCやスマホから画像をアップロードして「AIで画像を解析」を実行すると、Google Driveに自動保存されます。
+            </p>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button @click="fetchDriveFiles" class="btn btn-outline" :disabled="isLoadingDriveFiles">
+            🔄 再読み込み
+          </button>
+          <button @click="closeDriveModal" class="btn btn-outline">閉じる</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- GAS設定モーダル -->
+    <div v-if="showSettingsModal" class="modal-backdrop" @click.self="closeSettings">
+      <div class="modal-dialog">
+        <div class="modal-header">
+          <h3 style="font-size: 1.15rem; font-weight: 700; display: flex; align-items: center; gap: 0.5rem;">
+            <span>⚙️</span> バックエンド (GAS) 設定
+          </h3>
+          <button @click="closeSettings" class="btn-icon" style="border: none;">✕</button>
+        </div>
+
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">Google Apps Script (ウェブアプリURL)</label>
+            <input 
+              v-model="tempGasUrl" 
+              type="url" 
+              class="form-input" 
+              placeholder="https://script.google.com/macros/s/.../exec">
+            <div class="form-help">
+              Google Apps Scriptをデプロイして発行された「ウェブアプリURL」を貼り付けてください。ブラウザ内に安全に保存されます。
+            </div>
+          </div>
+
+          <div class="flex gap-2" style="margin-bottom: 1.5rem;">
+            <button 
+              @click="testGasConnection" 
+              class="btn btn-outline" 
+              :disabled="isTestingConnection || !tempGasUrl.trim()"
+              style="padding: 0.45rem 0.9rem; font-size: 0.85rem;">
+              <span v-if="isTestingConnection">接続テスト中...</span>
+              <span v-else>🔄 接続テスト</span>
+            </button>
+          </div>
+
+          <div style="background: var(--bg-card-subtle); padding: 1rem; border-radius: var(--radius-md); font-size: 0.82rem; line-height: 1.6; border: 1px solid var(--border-color);">
+            <div style="font-weight: 700; margin-bottom: 0.4rem; color: var(--text-main);">📌 GASの簡単セットアップ手順:</div>
+            <ol style="padding-left: 1.2rem; color: var(--text-muted);">
+              <li>Google Driveで新規Google Apps Scriptを作成し、プロジェクト内の <code>gas/Code.js</code> のコードを貼り付けます。</li>
+              <li>GAS画面の「プロジェクトの設定 ⚙️」>「スクリプト プロパティ」に <code>GEMINI_API_KEY</code> を追加します。</li>
+              <li>「デプロイ」>「新しいデプロイ」で種類を「ウェブアプリ」とし、アクセス権を「全員」にしてデプロイします。</li>
+              <li>発行された「ウェブアプリのURL」を上記フォームに入力して保存します。</li>
+            </ol>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button @click="closeSettings" class="btn btn-outline">キャンセル</button>
+          <button @click="saveSettings" class="btn btn-primary">設定を保存</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- トースト通知 -->
+    <div class="toast-container">
+      <div v-for="toast in toasts" :key="toast.id" class="toast" :class="toast.type">
+        <span>{{ toast.message }}</span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- App Script -->
+  <script src="js/app.js?v=3"></script>
+</body>
+</html>
