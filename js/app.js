@@ -7,18 +7,24 @@ const { createApp, ref, computed, onMounted, nextTick } = Vue;
 createApp({
   setup() {
     // 状態管理
-    const gasUrl = ref(localStorage.getItem('cn_photo_essay_gas_url') || '');
+    const configGasUrl = (typeof CONFIG !== 'undefined' && CONFIG.GAS_URL) ? CONFIG.GAS_URL.trim() : '';
+    const storedGasUrl = localStorage.getItem('cn_photo_essay_gas_url');
+    // localStorageに設定があればそれを優先、なければconfig.jsの設定を使用
+    const gasUrl = ref(storedGasUrl !== null ? storedGasUrl : configGasUrl);
     const tempGasUrl = ref(gasUrl.value);
     const isDarkTheme = ref(localStorage.getItem('cn_photo_essay_theme') === 'dark');
     const isDemoMode = ref(!gasUrl.value);
     const showSettingsModal = ref(false);
     const isTestingConnection = ref(false);
+    const spreadsheetUrl = ref(localStorage.getItem('cn_photo_essay_ss_url') || '');
+    const driveFolderUrl = ref(localStorage.getItem('cn_photo_essay_folder_url') || '');
 
     // 画像・解析状態
-    const currentImage = ref(null); // { base64, mimeType, name, previewUrl }
+    const currentImage = ref(null); // { base64, mimeType, name, previewUrl, fromDrive, fileId, fileUrl }
     const isAnalyzing = ref(false);
     const analysisData = ref(null);
     const driveInfo = ref(null);
+    const isFromCache = ref(false); // スプレッドシートキャッシュから取得したかどうか
 
     // Google Drive ギャラリー状態
     const showDriveModal = ref(false);
@@ -43,7 +49,7 @@ createApp({
       toasts.value.push({ id, message, type });
       setTimeout(() => {
         toasts.value = toasts.value.filter(t => t.id !== id);
-      }, 4000);
+      }, 4500);
     };
 
     // 初期化
@@ -53,7 +59,38 @@ createApp({
       }
       // サンプル画像を初期セットして使いやすさを向上
       loadSamplePreset('cafe');
+
+      // GAS接続がある場合はスプレッドシート情報等の取得を試みる
+      if (gasUrl.value) {
+        fetchAppInfo();
+      }
     });
+
+    // アプリ情報（スプレッドシートURL等）の取得
+    const fetchAppInfo = async () => {
+      if (!gasUrl.value) return;
+      try {
+        const response = await fetch(gasUrl.value, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({ action: 'get_app_info' }),
+          redirect: 'follow'
+        });
+        const res = await response.json();
+        if (res.status === 'success') {
+          if (res.spreadsheetUrl) {
+            spreadsheetUrl.value = res.spreadsheetUrl;
+            localStorage.setItem('cn_photo_essay_ss_url', res.spreadsheetUrl);
+          }
+          if (res.folderUrl) {
+            driveFolderUrl.value = res.folderUrl;
+            localStorage.setItem('cn_photo_essay_folder_url', res.folderUrl);
+          }
+        }
+      } catch (e) {
+        console.warn('App info fetch error (non-blocking):', e);
+      }
+    };
 
     // テーマ切り替え
     const toggleTheme = () => {
@@ -83,11 +120,29 @@ createApp({
       if (gasUrl.value) {
         isDemoMode.value = false;
         showToast('GASのWebアプリURLを保存しました', 'success');
+        fetchAppInfo();
       } else {
         isDemoMode.value = true;
         showToast('GAS URLが未設定のため、デモモードで動作します', 'info');
       }
       closeSettings();
+    };
+
+    const applyConfigGasUrl = () => {
+      if (configGasUrl) {
+        tempGasUrl.value = configGasUrl;
+        showToast('config.jsで指定されたGAS URLを読み込みました', 'info');
+      }
+    };
+
+    const clearCustomGasUrl = () => {
+      localStorage.removeItem('cn_photo_essay_gas_url');
+      gasUrl.value = configGasUrl;
+      tempGasUrl.value = configGasUrl;
+      isDemoMode.value = !configGasUrl;
+      showToast('ブラウザ保存URLをクリアし、config.jsの初期設定に戻しました', 'info');
+      closeSettings();
+      if (configGasUrl) fetchAppInfo();
     };
 
     // GAS接続テスト
@@ -106,7 +161,15 @@ createApp({
         });
         const res = await response.json();
         if (res.status === 'success') {
-          showToast('接続成功！Gemini APIキーも正常です。', 'success');
+          if (res.spreadsheetUrl) {
+            spreadsheetUrl.value = res.spreadsheetUrl;
+            localStorage.setItem('cn_photo_essay_ss_url', res.spreadsheetUrl);
+          }
+          if (res.folderUrl) {
+            driveFolderUrl.value = res.folderUrl;
+            localStorage.setItem('cn_photo_essay_folder_url', res.folderUrl);
+          }
+          showToast('接続成功！Gemini API・Google Driveフォルダ・スプレッドシート連携が正常です。', 'success');
         } else {
           showToast(res.message || '接続エラーが発生しました', 'error');
         }
@@ -132,14 +195,14 @@ createApp({
       }
     };
 
-    // 画像のリサイズ・圧縮＆Base64変換
+    // 画像のリサイズ・圧縮＆Base64変換（高速化のため最大幅800px & 0.80クオリティに最適化）
     const processFile = (file) => {
       const reader = new FileReader();
       reader.onload = (event) => {
         const img = new Image();
         img.onload = () => {
-          // 最大幅/高さ1200pxに圧縮
-          const maxDim = 1200;
+          // 高速通信 & Vision最適化のため最大800pxにリサイズ
+          const maxDim = 800;
           let width = img.width;
           let height = img.height;
 
@@ -160,7 +223,7 @@ createApp({
           ctx.drawImage(img, 0, 0, width, height);
 
           const mimeType = 'image/jpeg';
-          const base64 = canvas.toDataURL(mimeType, 0.85);
+          const base64 = canvas.toDataURL(mimeType, 0.80);
 
           currentImage.value = {
             base64: base64,
@@ -173,9 +236,10 @@ createApp({
           analysisData.value = null;
           correctionData.value = null;
           driveInfo.value = null;
+          isFromCache.value = false;
           userEssay.value = '';
 
-          showToast('画像を読み込みました。「AIで画像を解析」を押してください', 'info');
+          showToast('画像を読み込みました。「✨ AIで画像を解析」を押してください', 'info');
         };
         img.src = event.target.result;
       };
@@ -184,9 +248,13 @@ createApp({
 
     // Google Drive モーダル開く
     const openDriveModal = async () => {
-      console.log('openDriveModal called, gasUrl:', gasUrl.value);
+      console.log('openDriveModal clicked');
       showDriveModal.value = true;
-      await fetchDriveFiles();
+      try {
+        await fetchDriveFiles();
+      } catch (e) {
+        console.error('fetchDriveFiles error:', e);
+      }
     };
 
     const closeDriveModal = () => {
@@ -200,11 +268,11 @@ createApp({
       if (isDemoMode.value || !gasUrl.value) {
         setTimeout(() => {
           driveFiles.value = [
-            { id: 'demo-1', name: 'photo_cafe_sample.jpg', dateCreated: '2026/09/22 14:30', size: 1048576, type: 'cafe' },
-            { id: 'demo-2', name: 'photo_park_sample.jpg', dateCreated: '2026/09/21 10:15', size: 2097152, type: 'park' }
+            { id: 'demo-1', name: 'photo_cafe_sample.jpg', dateCreated: '2026/09/22 14:30', size: 1048576, type: 'cafe', hasCache: true, sceneDescription: 'カフェのコーヒーと本' },
+            { id: 'demo-2', name: 'photo_park_sample.jpg', dateCreated: '2026/09/21 10:15', size: 2097152, type: 'park', hasCache: true, sceneDescription: '公園の木とベンチ' }
           ];
           isLoadingDriveFiles.value = false;
-        }, 600);
+        }, 500);
         return;
       }
 
@@ -269,10 +337,16 @@ createApp({
           // 前回の作文などをリセット
           analysisData.value = null;
           correctionData.value = null;
+          isFromCache.value = false;
           userEssay.value = '';
 
           closeDriveModal();
-          showToast(`「${file.name}」を読み込みました。「AIで画像を解析」を押してください`, 'success');
+          
+          if (file.hasCache) {
+            showToast(`「${file.name}」を読み込みました（解析済みデータあり・高速表示可能）`, 'success');
+          } else {
+            showToast(`「${file.name}」を読み込みました。「✨ AIで画像を解析」を押してください`, 'info');
+          }
         } else {
           showToast(res.message || '画像の読み込みに失敗しました', 'error');
         }
@@ -284,8 +358,8 @@ createApp({
       }
     };
 
-    // 画像解析リクエスト
-    const analyzeImage = async () => {
+    // 画像解析リクエスト (forceReanalyze: true でキャッシュを無視してGeminiで再生成)
+    const analyzeImage = async (forceReanalyze = false) => {
       if (!currentImage.value) return;
 
       isAnalyzing.value = true;
@@ -300,9 +374,10 @@ createApp({
             fileName: currentImage.value.name || 'sample_cafe_demo.jpg',
             folderName: '中国語写真作文_Images (Demo)'
           };
+          isFromCache.value = !forceReanalyze;
           isAnalyzing.value = false;
-          showToast('【デモモード】画像解析が完了しました', 'success');
-        }, 1200);
+          showToast(forceReanalyze ? '【デモモード】AIで再解析しました' : '【デモモード】画像解析が完了しました', 'success');
+        }, 800);
         return;
       }
 
@@ -314,7 +389,8 @@ createApp({
           fileName: currentImage.value.name,
           fromDrive: !!currentImage.value.fromDrive,
           fileId: currentImage.value.fileId || '',
-          fileUrl: currentImage.value.fileUrl || ''
+          fileUrl: currentImage.value.fileUrl || '',
+          forceReanalyze: !!forceReanalyze
         };
 
         const response = await fetch(gasUrl.value, {
@@ -328,7 +404,17 @@ createApp({
         if (res.status === 'success' && res.data) {
           analysisData.value = res.data.analysis;
           driveInfo.value = res.data.drive;
-          showToast('Geminiによる画像解析が完了しました！', 'success');
+          isFromCache.value = !!res.data.cached;
+          if (res.data.spreadsheetUrl) {
+            spreadsheetUrl.value = res.data.spreadsheetUrl;
+            localStorage.setItem('cn_photo_essay_ss_url', res.data.spreadsheetUrl);
+          }
+
+          if (res.data.cached) {
+            showToast('⚡ スプレッドシートのキャッシュから高速読み込みしました！（約0.5秒）', 'success');
+          } else {
+            showToast('✨ Geminiによる画像解析が完了し、スプレッドシートに保存しました！', 'success');
+          }
         } else {
           showToast(res.message || '解析に失敗しました', 'error');
         }
@@ -356,7 +442,7 @@ createApp({
           correctionData.value = getDemoCorrection(userEssay.value);
           isCheckingEssay.value = false;
           showToast('【デモモード】添削が完了しました', 'success');
-        }, 1200);
+        }, 1000);
         return;
       }
 
@@ -494,6 +580,7 @@ createApp({
         fileName: fileName,
         folderName: '中国語写真作文_Images (Sample)'
       };
+      isFromCache.value = true;
       userEssay.value = type === 'cafe' ? '我在咖啡厅喝咖啡。咖啡很好喝，我很喜欢看书。' : '今天天气很好。公园里有很大的树，很多人散步。';
     };
 
@@ -706,6 +793,11 @@ createApp({
       // 設定 & テーマ
       gasUrl,
       tempGasUrl,
+      configGasUrl,
+      spreadsheetUrl,
+      driveFolderUrl,
+      applyConfigGasUrl,
+      clearCustomGasUrl,
       isDarkTheme,
       isDemoMode,
       showSettingsModal,
@@ -721,6 +813,7 @@ createApp({
       isAnalyzing,
       analysisData,
       driveInfo,
+      isFromCache,
       handleFileChange,
       handleDrop,
       analyzeImage,
