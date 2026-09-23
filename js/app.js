@@ -60,9 +60,10 @@ createApp({
       // サンプル画像を初期セットして使いやすさを向上
       loadSamplePreset('cafe');
 
-      // GAS接続がある場合はスプレッドシート情報等の取得を試みる
+      // GAS接続がある場合はスプレッドシート情報やDrive画像一覧をバックグラウンド先読み（即時表示用）
       if (gasUrl.value) {
         fetchAppInfo();
+        fetchDriveFiles(true); // サイレント先読み
       }
     });
 
@@ -246,14 +247,15 @@ createApp({
       reader.readAsDataURL(file);
     };
 
-    // Google Drive モーダル開く
+    // Google Drive モーダル開く（キャッシュがあれば即時0秒で表示）
     const openDriveModal = async () => {
-      console.log('openDriveModal clicked');
       showDriveModal.value = true;
-      try {
-        await fetchDriveFiles();
-      } catch (e) {
-        console.error('fetchDriveFiles error:', e);
+      // すでに一覧が取得済みであれば即時表示し、裏側で最新化（または再読み込みボタンで更新）
+      if (!driveFiles.value || driveFiles.value.length === 0) {
+        await fetchDriveFiles(false);
+      } else {
+        // バックグラウンドで静かに最新化
+        fetchDriveFiles(true);
       }
     };
 
@@ -261,9 +263,11 @@ createApp({
       showDriveModal.value = false;
     };
 
-    // Google Drive から画像一覧を取得
-    const fetchDriveFiles = async () => {
-      isLoadingDriveFiles.value = true;
+    // Google Drive から画像一覧を取得 (silent: true の場合はローディング画面を出さずに更新)
+    const fetchDriveFiles = async (silent = false) => {
+      if (!silent) {
+        isLoadingDriveFiles.value = true;
+      }
 
       if (isDemoMode.value || !gasUrl.value) {
         setTimeout(() => {
@@ -272,7 +276,7 @@ createApp({
             { id: 'demo-2', name: 'photo_park_sample.jpg', dateCreated: '2026/09/21 10:15', size: 2097152, type: 'park', hasCache: true, sceneDescription: '公園の木とベンチ' }
           ];
           isLoadingDriveFiles.value = false;
-        }, 500);
+        }, 200);
         return;
       }
 
@@ -286,18 +290,20 @@ createApp({
         const res = await response.json();
         if (res.status === 'success' && res.data) {
           driveFiles.value = res.data.files || [];
-        } else {
+        } else if (!silent) {
           showToast(res.message || 'Drive画像の取得に失敗しました', 'error');
         }
       } catch (err) {
         console.error('Drive files fetch error:', err);
-        showToast('Drive画像の取得に失敗しました: ' + err.message, 'error');
+        if (!silent) {
+          showToast('Drive画像の取得に失敗しました: ' + err.message, 'error');
+        }
       } finally {
         isLoadingDriveFiles.value = false;
       }
     };
 
-    // Google Drive から画像を選択してロード
+    // Google Drive から画像を選択してロード (即時0秒オプティミスティック表示 & 解析データ一括ロード)
     const selectDriveFile = async (file) => {
       if (isDemoMode.value || !gasUrl.value) {
         loadSamplePreset(file.type || 'cafe');
@@ -306,6 +312,36 @@ createApp({
         return;
       }
 
+      // 1. 【即時表示】クリックされた瞬間に高速サムネイルURLを使って画面に即座（0秒）に画像を表示＆モーダルを閉じる！
+      const fastPreviewUrl = file.thumbnailUrl ? file.thumbnailUrl.replace('sz=w300', 'sz=w1000') : `https://drive.google.com/thumbnail?id=${file.id}&sz=w1000`;
+      
+      currentImage.value = {
+        base64: fastPreviewUrl,
+        mimeType: file.mimeType || 'image/jpeg',
+        name: file.name,
+        previewUrl: fastPreviewUrl,
+        fromDrive: true,
+        fileId: file.id,
+        fileUrl: file.url || ''
+      };
+
+      driveInfo.value = {
+        saved: true,
+        fileName: file.name,
+        fileUrl: file.url || '',
+        isExisting: true
+      };
+
+      // 前回の解析データ・添削データを即座にリセット（前の画像の単語が残らないようにする）
+      analysisData.value = null;
+      isFromCache.value = false;
+      correctionData.value = null;
+      userEssay.value = '';
+
+      // モーダルを即座に閉じる（待ち時間なし！）
+      closeDriveModal();
+
+      // 2. バックグラウンドで完全な画像データとスプレッドシートの解析キャッシュを取得
       isLoadingDriveImage.value = true;
       try {
         const response = await fetch(gasUrl.value, {
@@ -319,40 +355,30 @@ createApp({
         });
         const res = await response.json();
         if (res.status === 'success' && res.data) {
-          currentImage.value = {
-            base64: res.data.base64,
-            mimeType: res.data.mimeType,
-            name: res.data.fileName,
-            previewUrl: res.data.base64,
-            fromDrive: true,
-            fileId: file.id,
-            fileUrl: res.data.fileUrl
-          };
-          driveInfo.value = {
-            saved: true,
-            fileName: res.data.fileName,
-            fileUrl: res.data.fileUrl,
-            isExisting: true
-          };
-          // 前回の作文などをリセット
-          analysisData.value = null;
-          correctionData.value = null;
-          isFromCache.value = false;
-          userEssay.value = '';
+          // 本体のBase64データがあれば更新
+          if (res.data.base64) {
+            currentImage.value.base64 = res.data.base64;
+          }
+          if (res.data.fileName) {
+            currentImage.value.name = res.data.fileName;
+          }
 
-          closeDriveModal();
-          
-          if (file.hasCache) {
-            showToast(`「${file.name}」を読み込みました（解析済みデータあり・高速表示可能）`, 'success');
+          // 解析済みキャッシュデータがあれば即座に単語・例文・模範作文を展開！
+          if (res.data.analysis) {
+            analysisData.value = res.data.analysis;
+            isFromCache.value = true;
+            activeTab.value = 'words';
+            showToast(`⚡「${file.name}」の解析データをスプレッドシートから読み込みました！`, 'success');
           } else {
+            analysisData.value = null;
+            isFromCache.value = false;
             showToast(`「${file.name}」を読み込みました。「✨ AIで画像を解析」を押してください`, 'info');
           }
         } else {
-          showToast(res.message || '画像の読み込みに失敗しました', 'error');
+          console.warn('Drive image detail fetch warning:', res.message);
         }
       } catch (err) {
-        console.error('Load drive image error:', err);
-        showToast('画像の読み込みエラー: ' + err.message, 'error');
+        console.warn('Load drive image background warning:', err);
       } finally {
         isLoadingDriveImage.value = false;
       }

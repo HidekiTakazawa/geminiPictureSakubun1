@@ -308,7 +308,15 @@
             </div>
 
             <!-- ローディング状態 -->
-            <div v-if="isAnalyzing" class="loading-overlay">
+            <div v-if="isLoadingDriveImage" class="loading-overlay">
+              <div class="spinner"></div>
+              <h3 style="font-size: 1.1rem; font-weight: 700;">⚡ スプレッドシートから解析データを読込中...</h3>
+              <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: 0.35rem;">
+                過去に解析した単語や模範作文を瞬時に呼び出しています
+              </p>
+            </div>
+
+            <div v-else-if="isAnalyzing" class="loading-overlay">
               <div class="spinner"></div>
               <h3 style="font-size: 1.1rem; font-weight: 700;">Geminiが画像を高速分析中...</h3>
               <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: 0.35rem;">
@@ -768,8 +776,8 @@
   </div>
 
   <!-- アプリ設定ファイル -->
-  <script src="js/config.js?v=7"></script>
+  <script src="js/config.js?v=10"></script>
   <!-- アプリメインスクリプト -->
-  <script src="js/app.js?v=7"></script>
+  <script src="js/app.js?v=10"></script>
 </body>
 </html>
