@@ -303,7 +303,7 @@ createApp({
       }
     };
 
-    // Google Drive から画像を選択してロード (即時0秒オプティミスティック表示 & 解析データ一括ロード)
+    // Google Drive から画像を選択してロード (即時0秒オプティミスティック表示 & 解析データ・作文・添削の一括ロード)
     const selectDriveFile = async (file) => {
       if (isDemoMode.value || !gasUrl.value) {
         loadSamplePreset(file.type || 'cafe');
@@ -332,55 +332,79 @@ createApp({
         isExisting: true
       };
 
-      // 前回の解析データ・添削データを即座にリセット（前の画像の単語が残らないようにする）
-      analysisData.value = null;
-      isFromCache.value = false;
-      correctionData.value = null;
-      userEssay.value = '';
+      // 2. 【即時0秒展開】一覧取得時にすでに解析データ・作文・添削があれば、通信を待たずに即座に画面へ反映！
+      if (file.analysis) {
+        analysisData.value = file.analysis;
+        isFromCache.value = true;
+        userEssay.value = file.userEssay || '';
+        correctionData.value = file.correction || null;
+        activeTab.value = 'words'; // 単語一覧をデフォルト表示
+
+        if (file.correction || file.userEssay) {
+          showToast(`⚡「${file.name}」の単語一覧・模範文・前回の作文と添削を読み込みました！`, 'success');
+        } else {
+          showToast(`⚡「${file.name}」の解析データをスプレッドシートから読み込みました！`, 'success');
+        }
+      } else {
+        // 未解析の場合はリセット
+        analysisData.value = null;
+        isFromCache.value = false;
+        correctionData.value = null;
+        userEssay.value = '';
+      }
 
       // モーダルを即座に閉じる（待ち時間なし！）
       closeDriveModal();
 
-      // 2. バックグラウンドで完全な画像データとスプレッドシートの解析キャッシュを取得
-      isLoadingDriveImage.value = true;
-      try {
-        const response = await fetch(gasUrl.value, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify({
-            action: 'load_drive_image',
-            fileId: file.id
-          }),
-          redirect: 'follow'
-        });
-        const res = await response.json();
-        if (res.status === 'success' && res.data) {
-          // 本体のBase64データがあれば更新
-          if (res.data.base64) {
-            currentImage.value.base64 = res.data.base64;
-          }
-          if (res.data.fileName) {
-            currentImage.value.name = res.data.fileName;
-          }
+      // 3. もし手元に解析データがない場合、バックグラウンドで取得
+      if (!file.analysis) {
+        isLoadingDriveImage.value = true;
+        try {
+          const response = await fetch(gasUrl.value, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: JSON.stringify({
+              action: 'load_drive_image',
+              fileId: file.id
+            }),
+            redirect: 'follow'
+          });
+          const res = await response.json();
+          if (res.status === 'success' && res.data) {
+            if (res.data.fileName) {
+              currentImage.value.name = res.data.fileName;
+            }
 
-          // 解析済みキャッシュデータがあれば即座に単語・例文・模範作文を展開！
-          if (res.data.analysis) {
-            analysisData.value = res.data.analysis;
-            isFromCache.value = true;
-            activeTab.value = 'words';
-            showToast(`⚡「${file.name}」の解析データをスプレッドシートから読み込みました！`, 'success');
-          } else {
-            analysisData.value = null;
-            isFromCache.value = false;
-            showToast(`「${file.name}」を読み込みました。「✨ AIで画像を解析」を押してください`, 'info');
+            // 以前のユーザー作文・添削結果があれば復元
+            if (res.data.userEssay) {
+              userEssay.value = res.data.userEssay;
+            }
+            if (res.data.correction) {
+              correctionData.value = res.data.correction;
+            }
+
+            // 解析済みキャッシュデータがあれば展開
+            if (res.data.analysis) {
+              analysisData.value = res.data.analysis;
+              isFromCache.value = true;
+              activeTab.value = 'words';
+              
+              if (res.data.hasEssay && (res.data.userEssay || res.data.correction)) {
+                showToast(`⚡「${file.name}」の単語一覧・模範文・前回の作文と添削を読み込みました！`, 'success');
+              } else {
+                showToast(`⚡「${file.name}」の解析データをスプレッドシートから読み込みました！`, 'success');
+              }
+            } else {
+              analysisData.value = null;
+              isFromCache.value = false;
+              showToast(`「${file.name}」を読み込みました。「✨ AIで画像を解析」を押してください`, 'info');
+            }
           }
-        } else {
-          console.warn('Drive image detail fetch warning:', res.message);
+        } catch (err) {
+          console.warn('Load drive image background warning:', err);
+        } finally {
+          isLoadingDriveImage.value = false;
         }
-      } catch (err) {
-        console.warn('Load drive image background warning:', err);
-      } finally {
-        isLoadingDriveImage.value = false;
       }
     };
 
@@ -431,6 +455,24 @@ createApp({
           analysisData.value = res.data.analysis;
           driveInfo.value = res.data.drive;
           isFromCache.value = !!res.data.cached;
+          
+          // 新規保存されたDriveファイルIDをcurrentImageに即座に紐付け（作文添削保存で確実に利用するため）
+          if (res.data.drive && res.data.drive.fileId) {
+            currentImage.value.fileId = res.data.drive.fileId;
+            currentImage.value.fileUrl = res.data.drive.fileUrl || '';
+            if (res.data.drive.fileName) {
+              currentImage.value.name = res.data.drive.fileName;
+            }
+          }
+
+          // キャッシュヒット時に以前の作文・添削があれば復元（未入力の場合のみ）
+          if (res.data.cached && !userEssay.value && res.data.userEssay) {
+            userEssay.value = res.data.userEssay;
+          }
+          if (res.data.cached && !correctionData.value && res.data.correction) {
+            correctionData.value = res.data.correction;
+          }
+
           if (res.data.spreadsheetUrl) {
             spreadsheetUrl.value = res.data.spreadsheetUrl;
             localStorage.setItem('cn_photo_essay_ss_url', res.data.spreadsheetUrl);
@@ -452,7 +494,7 @@ createApp({
       }
     };
 
-    // 作文添削リクエスト
+    // 作文添削リクエスト (添削後にスプレッドシートへ自動保存)
     const checkEssay = async () => {
       if (!userEssay.value.trim()) {
         showToast('作文を入力してください', 'warning');
@@ -484,7 +526,9 @@ createApp({
         const payload = {
           action: 'check_essay',
           userEssay: userEssay.value,
-          imageContext: imageContext
+          imageContext: imageContext,
+          fileId: (currentImage.value && currentImage.value.fileId) ? currentImage.value.fileId : '',
+          fileName: (currentImage.value && currentImage.value.name) ? currentImage.value.name : 'photo.jpg'
         };
 
         const response = await fetch(gasUrl.value, {
@@ -497,7 +541,11 @@ createApp({
         const res = await response.json();
         if (res.status === 'success' && res.data) {
           correctionData.value = res.data;
-          showToast('Geminiによる作文の添削が完了しました！', 'success');
+          if (res.spreadsheetUrl) {
+            spreadsheetUrl.value = res.spreadsheetUrl;
+            localStorage.setItem('cn_photo_essay_ss_url', res.spreadsheetUrl);
+          }
+          showToast('✨ 作文の添削が完了し、スプレッドシートに保存しました！', 'success');
         } else {
           showToast(res.message || '添削に失敗しました', 'error');
         }

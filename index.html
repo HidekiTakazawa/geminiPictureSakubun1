@@ -235,11 +235,16 @@
               <h2 class="card-title">
                 <span>✍️</span> あなたの中国語作文
               </h2>
-              <span class="char-counter">{{ userEssay.length }} 文字</span>
+              <div class="flex items-center gap-2">
+                <span v-if="correctionData" class="badge-tag" style="background: var(--success); color: white; font-weight: 600;">
+                  💾 保存済み ({{ correctionData.score }}点)
+                </span>
+                <span class="char-counter">{{ userEssay.length }} 文字</span>
+              </div>
             </div>
 
             <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.75rem;">
-              写真の内容を中国語で描写してみましょう。右側の抽出単語をクリックすると文中に挿入できます。
+              写真の内容を中国語で描写してみましょう。「AIに添削してもらう」を押すと、作文と添削結果がスプレッドシートに自動保存され、後から何度でも改善できます。
             </p>
 
             <textarea 
@@ -255,7 +260,7 @@
                 <button v-if="userEssay" @click="speakChinese(userEssay)" class="btn-icon" title="入力した作文の発音を聴く">
                   🔊
                 </button>
-                <button v-if="userEssay" @click="userEssay = ''" class="btn btn-outline" style="padding: 0.4rem 0.75rem; font-size: 0.8rem;">
+                <button v-if="userEssay" @click="userEssay = ''; correctionData = null;" class="btn btn-outline" style="padding: 0.4rem 0.75rem; font-size: 0.8rem;">
                   クリア
                 </button>
               </div>
@@ -492,6 +497,16 @@
             <div v-else-if="activeTab === 'correction'">
               <div v-if="correctionData">
                 
+                <!-- スプレッドシート保存インジケータ -->
+                <div class="scene-summary-bar" style="margin-bottom: 1rem;">
+                  <div class="scene-summary" style="color: var(--success); font-weight: 600;">
+                    <span>📊 <strong>スプレッドシート保存済み:</strong> 作文と添削結果がデータベース（AnalysisCache & EssayHistory）に記録されています</span>
+                  </div>
+                  <a v-if="spreadsheetUrl" :href="spreadsheetUrl" target="_blank" rel="noopener noreferrer" class="cache-indicator-pill" style="text-decoration: none; cursor: pointer;" title="スプレッドシートを開く">
+                    シートを確認 ↗
+                  </a>
+                </div>
+
                 <!-- スコアカード -->
                 <div class="score-card">
                   <div class="score-number">{{ correctionData.score }}<span style="font-size: 1.2rem; font-weight: 500;">点</span></div>
@@ -589,7 +604,12 @@
           <h3 style="font-size: 1.15rem; font-weight: 700; display: flex; align-items: center; gap: 0.5rem;">
             <span>📁</span> Google Drive 保存済み画像
           </h3>
-          <button @click="closeDriveModal" class="btn-icon" style="border: none;">✕</button>
+          <div class="flex items-center gap-2">
+            <button @click="fetchDriveFiles(false)" class="btn btn-outline" style="padding: 0.35rem 0.75rem; font-size: 0.8rem;" :disabled="isLoadingDriveFiles" title="一覧を最新化">
+              🔄 最新化
+            </button>
+            <button @click="closeDriveModal" class="btn-icon" style="border: none;">✕</button>
+          </div>
         </div>
 
         <div class="modal-body">
@@ -626,6 +646,9 @@
                   @error="$event.target.style.display='none'; $event.target.nextElementSibling.style.display='flex'">
                 <div class="drive-card-icon" :style="{ display: file.thumbnailUrl ? 'none' : 'flex' }">🖼️</div>
                 <div v-if="file.hasCache" class="drive-card-cache-tag">⚡ 解析済み</div>
+                <div v-if="file.hasEssay" class="drive-card-essay-tag">
+                  ✍️ 作文あり <span v-if="file.score">({{ file.score }}点)</span>
+                </div>
               </div>
               <div class="drive-card-info">
                 <div class="drive-card-name" :title="file.name">{{ file.name }}</div>
