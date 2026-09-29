@@ -86,32 +86,17 @@
         </div>
 
         <div class="header-actions">
-          <!-- スプレッドシート連携リンク（取得済みの場合） -->
-          <a v-if="spreadsheetUrl" 
-             :href="spreadsheetUrl" 
-             target="_blank" 
-             rel="noopener noreferrer" 
-             class="btn btn-outline ss-link-btn" 
-             title="解析データが保存されたGoogleスプレッドシートを開く">
-            📊 スプレッドシート ↗
-          </a>
+          <!-- スプレッドシート連携リンク（廃止） -->
 
-          <!-- Driveフォルダリンク（取得済みの場合） -->
-          <a v-if="driveFolderUrl" 
-             :href="driveFolderUrl" 
-             target="_blank" 
-             rel="noopener noreferrer" 
-             class="btn btn-outline ss-link-btn" 
-             style="border-color: var(--primary); color: var(--primary);"
-             title="画像やデータが保存されるGoogle Driveフォルダを開く">
-            📁 保存先フォルダ ↗
-          </a>
-
-          <!-- デモモード / GAS接続ステータス -->
+          <!-- Driveフォルダリンク（廃止） -->
+          <!-- ユーザー設定ステータス -->
+          <button @click="printContent" class="btn btn-outline" style="font-size: 0.82rem; padding: 0.4rem 0.8rem; margin-right: 0.5rem;" title="現在の学習内容をPDF用にプリント">
+            🖨️ プリント
+          </button>
           <button @click="openSettings" class="btn btn-outline" style="font-size: 0.82rem; padding: 0.4rem 0.8rem;">
-            <span class="status-dot" :class="{ 'connected': gasUrl, 'demo': isDemoMode }"></span>
-            <span v-if="gasUrl">GAS連携中</span>
-            <span v-else>デモモード (GAS未接続)</span>
+            <span>👤</span>
+            <span v-if="nickname && nickname !== '名無しさん'">{{ nickname }}</span>
+            <span v-else>名無しさん (設定)</span>
           </button>
 
           <!-- テーマ切替 -->
@@ -119,28 +104,13 @@
             <span v-if="isDarkTheme">☀️</span>
             <span v-else>🌙</span>
           </button>
-
-          <!-- 設定ボタン -->
-          <button @click="openSettings" class="btn-icon" title="GAS連携・設定">
-            ⚙️
-          </button>
         </div>
       </div>
     </header>
 
     <!-- メインコンテンツ -->
     <main class="main-container">
-      
-      <!-- ステータスバー（未接続時の案内） -->
-      <div v-if="!gasUrl" class="status-banner">
-        <div class="status-info">
-          <span>💡</span>
-          <span><strong>デモモードで動作中:</strong> サンプルデータで全機能を体験できます。Google Drive保存や独自のGemini APIを利用するには右上の⚙️からGAS URLを設定してください。</span>
-        </div>
-        <button @click="openSettings" class="btn btn-primary" style="padding: 0.4rem 0.85rem; font-size: 0.82rem;">
-          GASと連携する
-        </button>
-      </div>
+
 
       <!-- メイングリッド (左: 画像 & 作文, 右: 単語 / 模範文 / 添削) -->
       <div class="app-grid">
@@ -247,11 +217,19 @@
               写真の内容を中国語で描写してみましょう。「AIに添削してもらう」を押すと、作文と添削結果がスプレッドシートに自動保存され、後から何度でも改善できます。
             </p>
 
+            <!-- 所有者による制限の案内 -->
+            <div v-if="currentImage && currentImage.owner && currentImage.owner !== nickname" class="form-help" style="color: var(--danger); margin-bottom: 0.5rem; border: 1px solid var(--danger); padding: 0.5rem; border-radius: var(--radius-md);">
+              ⚠️ この画像の所有者は「{{ currentImage.owner }}」さんです。<br>
+              作文の入力や添削は画像のアップロード本人のみ可能です。
+            </div>
+
             <textarea 
               ref="essayTextarea"
               v-model="userEssay" 
               class="essay-textarea" 
               placeholder="例: 我在咖啡厅喝咖啡。咖啡很好喝，我很喜欢看书。"
+              :readonly="currentImage && currentImage.owner && currentImage.owner !== nickname"
+              :style="currentImage && currentImage.owner && currentImage.owner !== nickname ? 'background-color: var(--bg-card-subtle); cursor: not-allowed; opacity: 0.7;' : ''"
               rows="4">
             </textarea>
 
@@ -260,7 +238,7 @@
                 <button v-if="userEssay" @click="speakChinese(userEssay)" class="btn-icon" title="入力した作文の発音を聴く">
                   🔊
                 </button>
-                <button v-if="userEssay" @click="userEssay = ''; correctionData = null;" class="btn btn-outline" style="padding: 0.4rem 0.75rem; font-size: 0.8rem;">
+                <button v-if="userEssay && !(currentImage && currentImage.owner && currentImage.owner !== nickname)" @click="userEssay = ''; correctionData = null;" class="btn btn-outline" style="padding: 0.4rem 0.75rem; font-size: 0.8rem;">
                   クリア
                 </button>
               </div>
@@ -268,7 +246,7 @@
               <button 
                 @click="checkEssay" 
                 class="btn btn-accent" 
-                :disabled="isCheckingEssay || !userEssay.trim()"
+                :disabled="isCheckingEssay || !userEssay.trim() || (currentImage && currentImage.owner && currentImage.owner !== nickname)"
                 style="padding: 0.55rem 1.25rem;">
                 <span v-if="isCheckingEssay">添削中...</span>
                 <span v-else>🤖 AIに添削してもらう</span>
@@ -308,6 +286,16 @@
                 <span>✍️ 添削結果</span>
                 <span v-if="correctionData" style="font-size: 0.75rem; background: var(--success); color: white; padding: 0.1rem 0.4rem; border-radius: 99px;">
                   {{ correctionData.score }}点
+                </span>
+              </button>
+
+              <button 
+                class="tab-btn" 
+                :class="{ active: activeTab === 'impressions' }" 
+                @click="activeTab = 'impressions'">
+                <span>💬 感想</span>
+                <span v-if="impressions && impressions.length > 0" style="font-size: 0.75rem; background: rgba(0,0,0,0.1); padding: 0.1rem 0.4rem; border-radius: 99px;">
+                  {{ impressions.length }}
                 </span>
               </button>
             </div>
@@ -591,6 +579,48 @@
               </div>
             </div>
 
+            <!-- 💬 感想文タブ (Impressions) -->
+            <div v-if="activeTab === 'impressions'" class="tab-content">
+              <div v-if="impressions && impressions.length > 0" style="display: flex; flex-direction: column; gap: 1rem; margin-bottom: 1.5rem; max-height: 400px; overflow-y: auto; padding-right: 0.5rem;">
+                <div v-for="(imp, idx) in impressions" :key="idx" style="background: var(--bg-card-subtle); padding: 1rem; border-radius: var(--radius-md); border-left: 4px solid var(--primary);">
+                  <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.4rem;">
+                    <strong style="font-size: 0.95rem; color: var(--text-main);">{{ imp.name }}</strong>
+                    <span style="font-size: 0.75rem; color: var(--text-muted);">{{ imp.date }}</span>
+                  </div>
+                  <p style="font-size: 0.9rem; line-height: 1.5; color: var(--text-main); white-space: pre-wrap;">{{ imp.text }}</p>
+                </div>
+              </div>
+              <div v-else class="empty-state" style="margin-bottom: 1.5rem;">
+                <div class="empty-icon">💬</div>
+                <h3>まだ感想がありません</h3>
+                <p style="font-size: 0.85rem; margin-top: 0.35rem;">この写真の最初の感想を書き込んでみましょう！</p>
+              </div>
+              
+              <div v-if="currentImage && currentImage.fileId" style="border-top: 1px solid var(--border-color); padding-top: 1.5rem;">
+                <h4 style="font-size: 0.95rem; margin-bottom: 0.5rem; color: var(--text-main);">感想を投稿する</h4>
+                <textarea 
+                  v-model="newImpression" 
+                  class="essay-textarea" 
+                  placeholder="この画像や作文についての感想を入力..." 
+                  rows="3" 
+                  style="min-height: 80px; margin-bottom: 0.75rem;">
+                </textarea>
+                <div style="text-align: right;">
+                  <button 
+                    @click="submitImpression" 
+                    class="btn btn-accent" 
+                    :disabled="isSubmittingImpression || !newImpression.trim()"
+                    style="padding: 0.45rem 1rem; font-size: 0.9rem;">
+                    <span v-if="isSubmittingImpression">送信中...</span>
+                    <span v-else>送信する</span>
+                  </button>
+                </div>
+              </div>
+              <div v-else class="form-help" style="margin-top: 1rem;">
+                画像を読み込むと感想を投稿できます。
+              </div>
+            </div>
+
           </div>
         </div>
 
@@ -645,7 +675,6 @@
                   loading="lazy"
                   @error="$event.target.style.display='none'; $event.target.nextElementSibling.style.display='flex'">
                 <div class="drive-card-icon" :style="{ display: file.thumbnailUrl ? 'none' : 'flex' }">🖼️</div>
-                <div v-if="file.hasCache" class="drive-card-cache-tag">⚡ 解析済み</div>
                 <div v-if="file.hasEssay" class="drive-card-essay-tag">
                   ✍️ 作文あり <span v-if="file.score">({{ file.score }}点)</span>
                 </div>
@@ -657,9 +686,14 @@
                 </div>
                 <div class="drive-card-date">{{ file.dateCreated }}</div>
               </div>
-              <button class="btn btn-primary" style="padding: 0.35rem 0.75rem; font-size: 0.78rem; width: 100%;">
-                この画像で学習する
-              </button>
+              <div class="flex items-center gap-2" style="width: 100%;">
+                <button class="btn btn-primary" style="padding: 0.35rem 0.75rem; font-size: 0.78rem; flex: 1;">
+                  この画像で学習する
+                </button>
+                <button v-if="file.owner === nickname && nickname !== '名無しさん'" @click.stop="deleteDriveFile(file)" class="btn btn-outline" style="padding: 0.35rem 0.5rem; font-size: 0.78rem; color: var(--danger); border-color: var(--danger);" title="画像を削除">
+                  🗑️
+                </button>
+              </div>
             </div>
           </div>
 
@@ -682,100 +716,31 @@
       </div>
     </div>
 
-    <!-- GAS設定モーダル -->
+    <!-- ユーザー設定モーダル -->
     <div v-if="showSettingsModal" class="modal-backdrop" @click.self="closeSettings">
       <div class="modal-dialog">
         <div class="modal-header">
           <h3 style="font-size: 1.15rem; font-weight: 700; display: flex; align-items: center; gap: 0.5rem;">
-            <span>⚙️</span> バックエンド (GAS) 設定
+            <span>⚙️</span> ユーザー設定
           </h3>
           <button @click="closeSettings" class="btn-icon" style="border: none;">✕</button>
         </div>
 
         <div class="modal-body">
-          <!-- スプレッドシート & フォルダ連携ステータス -->
-          <div v-if="spreadsheetUrl || driveFolderUrl" class="ss-info-box">
-            <div class="flex items-center justify-between" style="margin-bottom: 0.5rem;">
-              <div class="flex items-center gap-2">
-                <span style="font-size: 1.2rem;">📊</span>
-                <div>
-                  <div style="font-weight: 700; font-size: 0.88rem;">スプレッドシート連携</div>
-                  <div style="font-size: 0.78rem; color: var(--text-muted);">AI解析結果が自動保存されています</div>
-                </div>
-              </div>
-              <a v-if="spreadsheetUrl" :href="spreadsheetUrl" target="_blank" rel="noopener noreferrer" class="btn btn-primary" style="font-size: 0.78rem; padding: 0.35rem 0.75rem;">
-                シートを開く ↗
-              </a>
-            </div>
-            <div v-if="driveFolderUrl" class="flex items-center justify-between" style="border-top: 1px dashed var(--border-color); padding-top: 0.5rem; margin-top: 0.5rem;">
-              <div class="flex items-center gap-2">
-                <span style="font-size: 1.2rem;">📁</span>
-                <div>
-                  <div style="font-weight: 700; font-size: 0.88rem;">Google Drive 保存フォルダ</div>
-                  <div style="font-size: 0.78rem; color: var(--text-muted);">「中国語写真作文」フォルダ</div>
-                </div>
-              </div>
-              <a :href="driveFolderUrl" target="_blank" rel="noopener noreferrer" class="btn btn-outline" style="font-size: 0.78rem; padding: 0.35rem 0.75rem;">
-                フォルダを開く ↗
-              </a>
-            </div>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label">Google Apps Script (ウェブアプリURL)</label>
+          <div class="form-group" style="margin-bottom: 1.5rem;">
+            <label class="form-label">あなたのニックネーム（画像の所有者識別用）</label>
             <input 
-              v-model="tempGasUrl" 
-              type="url" 
+              v-model="tempNickname" 
+              type="text" 
               class="form-input" 
-              placeholder="https://script.google.com/macros/s/.../exec">
+              placeholder="例: たろう"
+              :disabled="nickname !== '名無しさん' && !!nickname">
             <div class="form-help">
-              <span v-if="configGasUrl" style="color: var(--color-success); font-weight: 500;">
-                ✓ <code>js/config.js</code> に埋め込みURLが設定されています。
-              </span>
-              <span v-else>
-                全端末共通で利用したい場合は、<code>js/config.js</code> にGAS URLを書き込むと自動で適用されます。
-              </span>
+              ニックネームを設定すると、あなたがアップロードした画像に対してのみ作文機能を利用できるようになります。一度変更すると再変更できません。
             </div>
           </div>
 
-          <div class="flex gap-2" style="margin-bottom: 1.5rem; flex-wrap: wrap;">
-            <button 
-              @click="testGasConnection" 
-              class="btn btn-outline" 
-              :disabled="isTestingConnection || !tempGasUrl.trim()"
-              style="padding: 0.45rem 0.9rem; font-size: 0.85rem;">
-              <span v-if="isTestingConnection">接続テスト中...</span>
-              <span v-else>🔄 接続テスト</span>
-            </button>
-            <button 
-              v-if="configGasUrl && tempGasUrl !== configGasUrl"
-              @click="applyConfigGasUrl" 
-              class="btn btn-outline" 
-              style="padding: 0.45rem 0.9rem; font-size: 0.85rem;">
-              📋 config.js のURLを反映
-            </button>
-            <button 
-              v-if="configGasUrl"
-              @click="clearCustomGasUrl" 
-              class="btn btn-outline" 
-              style="padding: 0.45rem 0.9rem; font-size: 0.85rem; color: var(--text-muted);">
-              初期設定に戻す
-            </button>
-          </div>
-
-          <div style="background: var(--bg-card-subtle); padding: 1rem; border-radius: var(--radius-md); font-size: 0.82rem; line-height: 1.6; border: 1px solid var(--border-color);">
-            <div style="font-weight: 700; margin-bottom: 0.4rem; color: var(--text-main);">📌 高速化キャッシュ＆スプレッドシート機能:</div>
-            <div style="color: var(--text-muted); margin-bottom: 0.6rem;">
-              初回解析時にスプレッドシート（<code>中国語写真作文_データベース</code>）がGoogle Driveに自動作成されます。2回目以降はAIを介さずスプレッドシートから<strong>0.5秒で高速表示</strong>されます。
-            </div>
-            <div style="font-weight: 700; margin-bottom: 0.4rem; color: var(--text-main);">📌 GASのセットアップ手順:</div>
-            <ol style="padding-left: 1.2rem; color: var(--text-muted);">
-              <li>Google Apps Scriptに <code>gas/Code.js</code> のコードを貼り付けます。</li>
-              <li>「プロジェクトの設定 ⚙️」>「スクリプト プロパティ」に <code>GEMINI_API_KEY</code> を設定します。</li>
-              <li>「デプロイ」>「新しいデプロイ」>「ウェブアプリ」で、アクセス権「全員」でデプロイします。</li>
-              <li>発行された「ウェブアプリのURL」を <code>js/config.js</code> に貼り付けます。</li>
-            </ol>
-          </div>
+          <!-- スプレッドシート & フォルダ連携ステータス（廃止） -->
         </div>
 
         <div class="modal-footer">
