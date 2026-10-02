@@ -203,6 +203,7 @@ createApp({
           };
 
           // 以前の解析結果をリセット
+          analysisData.value = null;
           correctionData.value = null;
           driveInfo.value = null;
           isFromCache.value = false;
@@ -849,8 +850,12 @@ createApp({
 
     // 感想文送信リクエスト
     const submitImpression = async () => {
-      if (!newImpression.value.trim() || !currentImage.value || !currentImage.value.fileId) {
-        showToast('画像が保存されていないか、感想文が空です', 'warning');
+      if (!newImpression.value.trim()) {
+        showToast('感想文が空です', 'warning');
+        return;
+      }
+      if (!currentImage.value || !currentImage.value.fileId) {
+        showToast('画像をAIで解析して保存してから感想を投稿してください', 'warning');
         return;
       }
       isSubmittingImpression.value = true;

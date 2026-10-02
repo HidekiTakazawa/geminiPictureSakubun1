@@ -596,7 +596,7 @@
                 <p style="font-size: 0.85rem; margin-top: 0.35rem;">この写真の最初の感想を書き込んでみましょう！</p>
               </div>
               
-              <div v-if="currentImage && currentImage.fileId" style="border-top: 1px solid var(--border-color); padding-top: 1.5rem;">
+              <div v-if="currentImage" style="border-top: 1px solid var(--border-color); padding-top: 1.5rem;">
                 <h4 style="font-size: 0.95rem; margin-bottom: 0.5rem; color: var(--text-main);">感想を投稿する</h4>
                 <textarea 
                   v-model="newImpression" 
